@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status, Depends, BackgroundTasks, Header
+from fastapi import APIRouter, HTTPException, status, Depends, BackgroundTasks, Header, Body, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from ..schemas.users import UserCreate, UserResponse, Token
 from ..schemas.auth import ForgotPasswordRequest, ResetPasswordRequest, ResetPasswordCodeRequest
@@ -150,6 +150,65 @@ def forgot_password(request: ForgotPasswordRequest, background_tasks: Background
     except Exception as e:
         print(f"Forgot password error: {e}")
         return {"message": "Une erreur est survenue. Veuillez réessayer plus tard."}
+    
+
+
+
+
+@router.post("/google-login")
+def google_login(request: Request, payload: dict = Body(...)):
+    """
+    Authentifie un utilisateur Google via Supabase.
+    Récupère son profil et retourne un JWT local.
+    """
+    try:
+        supabase_token = payload.get("access_token")
+        if not supabase_token:
+            raise HTTPException(status_code=400, detail="Access token requis")
+
+        # Vérifie le token via l'API Supabase
+        user_info_resp = supabase.auth.get_user(jwt=supabase_token)
+        if not user_info_resp.user:
+            raise HTTPException(status_code=401, detail="Token Supabase invalide")
+
+        user_email = user_info_resp.user.email
+        if not user_email:
+            raise HTTPException(status_code=400, detail="Email utilisateur manquant")
+
+        # Vérifie dans la table `utilisateurs`
+        user_res = supabase.table("utilisateurs").select("*").eq("email", user_email).single().execute()
+        if not user_res.data:
+            raise HTTPException(status_code=404, detail="Aucun profil trouvé pour cet email.")
+
+        user = user_res.data
+
+        # Finalisation du profil si nécessaire
+        if not user.get("est_verifie"):
+            raise HTTPException(
+                status_code=403,
+                detail="Votre compte n'a pas encore été validé par un administrateur."
+            )
+
+        token_data = {
+            "sub": user_email,
+            "id": user.get("id"),
+            "role": user.get("role"),
+            "nom": user.get("nom"),
+            "prenom": user.get("prenom"),
+            "fokontany_id": user.get("fokontany_id")
+        }
+
+        access_token = create_access_token(data=token_data)
+        return {"access_token": access_token, "token_type": "bearer"}
+
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        print(f"[Google Login] Erreur : {e}")
+        raise HTTPException(status_code=500, detail="Erreur interne lors de la connexion Google")
+
+
+
 
 @router.post("/reset-password", status_code=status.HTTP_200_OK, summary="Réinitialiser le mot de passe")
 def reset_password(request: ResetPasswordRequest):

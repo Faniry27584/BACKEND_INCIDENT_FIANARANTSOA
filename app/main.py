@@ -14,6 +14,7 @@ load_dotenv()
 
 ALLOWED_ORIGINS = [
     "http://localhost:3000"
+
 ]
 
 app = FastAPI(
