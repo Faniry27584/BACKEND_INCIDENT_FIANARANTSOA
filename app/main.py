@@ -13,8 +13,8 @@ from fastapi.openapi.utils import get_openapi
 load_dotenv()
 
 ALLOWED_ORIGINS = [
-    "*"
-    ""  # Mise à jour pour correspondre à votre frontend et le vercel en production
+    "http://localhost:3000"
+
 ]
 
 app = FastAPI(
@@ -22,13 +22,15 @@ app = FastAPI(
     description="Cette API gère toutes les opérations pour l'application web et mobile.",
     version="0.1.0"
 )
+
+# ... (le code de custom_openapi et du middleware reste identique)
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
     openapi_schema = get_openapi(
-        title="Ton API",
+        title="API pour la Supervision des Incidents à Fianarantsoa",
         version="1.0.0",
-        description="API avec Auth Bearer",
+        description="Cette API gère toutes le opérations pour l'application web et mobile",
         routes=app.routes,
     )
     openapi_schema["components"]["securitySchemes"] = {
@@ -46,7 +48,6 @@ def custom_openapi():
 
 app.openapi = custom_openapi
 
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -57,6 +58,7 @@ app.add_middleware(
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = os.getenv("ALGORITHM")
+# ... (le reste des variables d'environnement)
 FROM_EMAIL = os.getenv("FROM_EMAIL")
 SMTP_SERVER = os.getenv("SMTP_SERVER")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
@@ -116,7 +118,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
         fokontany_id = user_data.get('fokontany_id')
         
         active_websockets_by_user_id[user_id] = websocket
-
         if user_role in active_websockets_by_role:
             active_websockets_by_role[user_role].add(user_id)
             print(f"Client {user_id} (rôle: {user_role}) a rejoint la room '{user_role}'")
@@ -126,7 +127,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                 active_websockets_by_fokontany[fokontany_id] = set()
             active_websockets_by_fokontany[fokontany_id].add(user_id)
             print(f"Client {user_id} (rôle: CHEF_FOKONTANY) a rejoint la room 'fokontany_{fokontany_id}'")
-
         print(f"Client WebSocket connecté: {user_id} (Rôle: {user_role}, Fokontany: {fokontany_id if fokontany_id else 'N/A'})")
         
         while True:
@@ -147,12 +147,13 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
             if not active_websockets_by_fokontany[fokontany_id]:
                 del active_websockets_by_fokontany[fokontany_id]
 
-async def _broadcast_panic_alert_impl(incident_data: dict):
+# CORRECTION : La fonction accepte maintenant sender_id
+async def _broadcast_panic_alert_impl(incident_data: dict, sender_id: str):
     users_to_notify_uniquely = set()
     roles_globaux_a_notifier = ["AUTORITE_LOCALE", "SECURITE_URBAINE"]
     for role in roles_globaux_a_notifier:
         users_to_notify_uniquely.update(active_websockets_by_role.get(role, set()))
-
+    
     fokontany_id_incident = incident_data.get('fokontany_id')
     if fokontany_id_incident:
         try:
@@ -168,8 +169,12 @@ async def _broadcast_panic_alert_impl(incident_data: dict):
         except Exception as e:
             print(f"Erreur lors de la récupération des Chefs Fokontany: {e}")
 
+    # CORRECTION : Exclure l'expéditeur de la liste des destinataires
+    users_to_notify_uniquely.discard(sender_id)
+    print(f"Expéditeur {sender_id} exclu de la liste de notification.")
+
     notified_count = 0
-    message_id = str(uuid.uuid4())  # Génération d’un ID unique pour chaque notification
+    message_id = str(uuid.uuid4())
     print(f"Tentative de diffusion de l'alerte à {len(users_to_notify_uniquely)} utilisateurs uniques.")
     for user_id in users_to_notify_uniquely:
         websocket = active_websockets_by_user_id.get(user_id)
@@ -190,7 +195,7 @@ socket_events.broadcast_panic_alert = _broadcast_panic_alert_impl
 def read_root():
     return {"message": "Bienvenue sur l'API de Gestion des Incidents de Fianarantsoa!"}
 
-# Routeur du Backend
+# ... (le reste du fichier avec les include_router reste identique)
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentification"])
 app.include_router(fokontany.router, prefix="/api/v1/fokontany", tags=["Fokontany"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Administration"])

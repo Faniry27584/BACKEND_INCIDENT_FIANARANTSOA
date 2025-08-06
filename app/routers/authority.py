@@ -37,6 +37,21 @@ def get_pending_incidents(current_user: UserResponse = Depends(get_current_autho
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# NOUVELLE ROUTE : Pour que l'Autorité Locale voie tous les incidents
+@router.get("/incidents/all",
+            response_model=List[IncidentResponse],
+            summary="Lister tous les incidents du système pour l'Autorité Locale")
+def get_all_incidents(current_user: UserResponse = Depends(get_current_authority_user)):
+    """Permet à une autorité locale de voir tous les incidents de la base de données."""
+    try:
+        response = supabase.table("incidents").select(
+            "*, fokontany:fokontany_id(*), typesincident:type_id(*)"
+        ).order("date_signalement", desc=True).execute()
+        return response.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/incidents/{incident_id}/validate",
              response_model=IncidentResponse,
              summary="Valider un incident")

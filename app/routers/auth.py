@@ -9,7 +9,6 @@ import secrets
 from datetime import datetime, timedelta, timezone
 import hashlib
 from ..utils.dependencies import get_current_user_data 
-
 router = APIRouter()
 
 @router.post("/register",
@@ -28,15 +27,22 @@ def register_user(user: UserCreate, background_tasks: BackgroundTasks):
         profile_res = supabase.table("utilisateurs").select("id, role").eq("email", user.email).execute()
         existing_profile = profile_res.data[0] if profile_res.data else None
 
+        # MISE À JOUR : Logique de validation des champs requis par rôle
+        user_role_upper = user.role.upper().replace(" ", "_")
+        if user_role_upper == 'CHEF_FOKONTANY' and not user.fokontany_id:
+            raise HTTPException(status_code=400, detail="Le Fokontany est requis pour un Chef de Fokontany.")
+        if user_role_upper == 'SECURITE_URBAINE' and (not user.poste_securite_id or not user.fokontany_id):
+            raise HTTPException(status_code=400, detail="Le Poste de sécurité ET le Fokontany sont requis pour la Sécurité Urbaine.")
+
         # Préparer les données du profil à insérer ou mettre à jour
         profile_data = {
             "nom": user.nom,
             "prenom": user.prenom,
             "telephone": user.telephone,
-            "role": user.role.upper().replace(" ", "_"),
-            "fokontany_id": user.fokontany_id if user.role.upper().replace(" ", "_") == 'CHEF_FOKONTANY' else None,
-            "poste_securite_id": user.poste_securite_id if user.role.upper().replace(" ", "_") == 'SECURITE_URBAINE' else None,
-            "est_verifie": True if user.role.upper().replace(" ", "_") == 'CITOYEN' else False
+            "role": user_role_upper,
+            "fokontany_id": user.fokontany_id if user_role_upper in ['CHEF_FOKONTANY', 'SECURITE_URBAINE'] else None,
+            "poste_securite_id": user.poste_securite_id if user_role_upper == 'SECURITE_URBAINE' else None,
+            "est_verifie": True if user_role_upper == 'CITOYEN' else False
         }
 
         # CAS 1 : Finalisation d'un profil Google (le profil existe mais n'a pas de rôle)
@@ -54,7 +60,6 @@ def register_user(user: UserCreate, background_tasks: BackgroundTasks):
         else:
             if not user.mot_de_passe:
                 raise HTTPException(status_code=400, detail="Le mot de passe est requis pour une inscription standard.")
-
             # Étape A : Créer l'utilisateur dans le service d'authentification de Supabase
             auth_response = supabase.auth.sign_up({"email": user.email, "password": user.mot_de_passe})
             if not auth_response.user:
@@ -70,9 +75,14 @@ def register_user(user: UserCreate, background_tasks: BackgroundTasks):
 
         # Envoyer l'e-mail de notification si nécessaire
         if not finalized_user.get("est_verifie"):
-            # ... (votre code d'envoi d'e-mail reste le même)
-            pass
-
+            # (Votre code d'envoi d'e-mail reste le même)
+            admin_email = "giffmada@gmail.com" 
+            background_tasks.add_task(
+                send_new_registration_to_admin,
+                admin_email=admin_email,
+                new_user_email=user.email,
+                new_user_role=user.role
+            )
         return finalized_user
 
     except HTTPException as http_exc:
@@ -81,7 +91,7 @@ def register_user(user: UserCreate, background_tasks: BackgroundTasks):
         print(f"Erreur inattendue lors de l'inscription: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Les autres routes restent inchangées
+# Les autres routes (login, forgot-password, etc.) restent inchangées...
 @router.post("/login",
 response_model=Token,
 summary="Connecter un utilisateur")
@@ -91,7 +101,6 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
         response = supabase.table("utilisateurs").select("*").eq("email", form_data.username).single().execute()
         if not response.data:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Email ou mot de passe incorrect.")
-
         user = response.data
         if not user.get("est_verifie"):
             raise HTTPException(
@@ -100,7 +109,6 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
             )
         if not verify_password(form_data.password, user.get("mot_de_passe_hash")):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Email ou mot de passe incorrect.")
-
         token_data = {
             "sub": user.get("email"),
             "id": user.get("id"),
@@ -126,24 +134,19 @@ def forgot_password(request: ForgotPasswordRequest, background_tasks: Background
         user_res = supabase.table("utilisateurs").select("id, email").eq("email", request.email).single().execute()
         if not user_res.data:
             return {"message": "Si un compte avec cet email existe, un lien de réinitialisation a été envoyé."}
-
         reset_token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(reset_token.encode('utf-8')).hexdigest()
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
-
         supabase.table("utilisateurs").update({
             "reset_token": token_hash,
             "reset_token_expires": expires_at.isoformat()
         }).eq("email", request.email).execute()
-
         background_tasks.add_task(
             send_password_reset_email,
             user_email=request.email,
             reset_token=reset_token
         )
-
         return {"message": "Si un compte avec cet email existe, un lien de réinitialisation a été envoyé."}
-
     except Exception as e:
         print(f"Forgot password error: {e}")
         return {"message": "Une erreur est survenue. Veuillez réessayer plus tard."}
@@ -220,16 +223,13 @@ def reset_password(request: ResetPasswordRequest):
         token_expires_str = user.get("reset_token_expires")
         if not token_expires_str or datetime.fromisoformat(token_expires_str) < datetime.now(timezone.utc):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Le lien de réinitialisation a expiré.")
-
         new_password_hash = hash_password(request.new_password)
         supabase.table("utilisateurs").update({
             "mot_de_passe_hash": new_password_hash,
             "reset_token": None,
             "reset_token_expires": None
         }).eq("id", user['id']).execute()
-
         return {"message": "Votre mot de passe a été réinitialisé avec succès."}
-
     except HTTPException as http_exc:
         raise http_exc
     except Exception as e:
@@ -244,7 +244,6 @@ async def exchange_supabase_token(authorization: str = Header(...)):
         raise HTTPException(status_code=401, detail="Invalid authorization header")
     
     supabase_token = authorization.split(" ")[1]
-
     try:
         user_res = supabase.auth.get_user(supabase_token)
         user_supabase = user_res.user
@@ -252,34 +251,47 @@ async def exchange_supabase_token(authorization: str = Header(...)):
             raise HTTPException(status_code=401, detail="Invalid Supabase token")
 
         profile_res = supabase.table("utilisateurs").select("*").eq("id", user_supabase.id).single().execute()
-        if not profile_res.data:
-            raise HTTPException(status_code=404, detail="Profil utilisateur non trouvé dans la base de données publique.")
         
+        # CAS 1: Le profil public n'existe pas encore (ne devrait pas arriver avec le trigger, mais sécurité)
+        if not profile_res.data:
+            raise HTTPException(status_code=404, detail="Profil utilisateur non trouvé. Veuillez compléter l'inscription.")
+
         user_profile = profile_res.data
+
+        # CAS 2: Le profil existe mais est incomplet (pas de rôle) -> il faut le finaliser
+        if not user_profile.get("role"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Profil incomplet. Veuillez finaliser votre inscription."
+            )
+
+        # CAS 3: Le profil est complet -> on génère le token et on connecte l'utilisateur
         token_data = {
             "sub": user_profile.get("email"),
-            "id": user_profile.get("id"),
+            "id": str(user_profile.get("id")), # Convertir UUID en str
             "role": user_profile.get("role"),
             "nom": user_profile.get("nom"),
             "prenom": user_profile.get("prenom"),
             "fokontany_id": user_profile.get("fokontany_id")
         }
         access_token = create_access_token(data=token_data)
-        return {"access_token": access_token, "access_token": access_token, "token_type": "bearer"}
+        return {"access_token": access_token, "token_type": "bearer"}
 
+    except HTTPException as e:
+        raise e # Fait remonter les exceptions 404 et 409
     except Exception as e:
         print(f"Token exchange error: {e}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Impossible de valider le token Supabase.",
         )
-    
+
 
 #Code pour l'APP mobile
 @router.post(
     "/forgot-password-mobile-code",
     status_code=status.HTTP_200_OK,
-    summary="Demander réinitialisation (envoi CODE pour MOBILE)"
+    summary="Demander réinitialisation (ROUTE POUR LE MOBILE)"
 )
 def forgot_password_mobile_code(
     reset_request: ForgotPasswordRequest,
@@ -331,7 +343,7 @@ def forgot_password_mobile_code(
 @router.post(
     "/reset-password-with-code",
     status_code=status.HTTP_200_OK,
-    summary="Réinitialiser le mot de passe avec le code mobile"
+    summary="Réinitialiser le mot de passe avec le code mobile(ROUTE POUR LE MOBILE)"
 )
 def reset_password_with_code(request: ResetPasswordCodeRequest):
     """
