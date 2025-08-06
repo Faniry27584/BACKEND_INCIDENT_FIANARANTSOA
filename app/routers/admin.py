@@ -264,25 +264,3 @@ def delete_poste(poste_id: int, current_user: UserResponse = Depends(get_current
             raise HTTPException(status_code=409, detail="Impossible de supprimer ce poste car il est lié à des utilisateurs ou des types d'incidents.")
         raise HTTPException(status_code=500, detail=str(e))
     
-# --- CORRECTION: Logique de validation d'email ---
-@router.post("/users/{user_id}/check-email-validity",
-             summary="Vérifier la validité d'un email (via DNS)",
-             dependencies=[Depends(get_current_admin_user)])
-def check_email_validity(user_id: UUID):
-    try:
-        user_res = supabase.table("utilisateurs").select("email").eq("id", user_id).single().execute()
-        if not user_res.data:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur non trouvé.")
-        
-        email = user_res.data['email']
-        domain = email.split('@')[1]
-
-        # VRAIE VÉRIFICATION: On vérifie si le domaine a des enregistrements MX
-        try:
-            dns.resolver.resolve(domain, 'MX')
-            return {"email": email, "is_valid": True, "message": "Le domaine de l'e-mail est valide et accepte des e-mails."}
-        except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.exception.Timeout):
-            return {"email": email, "is_valid": False, "message": "Le domaine de l'e-mail semble invalide ou n'a pas pu être contacté."}
-            
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
