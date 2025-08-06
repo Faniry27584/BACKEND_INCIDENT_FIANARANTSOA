@@ -13,7 +13,8 @@ from fastapi.openapi.utils import get_openapi
 load_dotenv()
 
 ALLOWED_ORIGINS = [
-    "*"  # Mise à jour pour correspondre à votre frontend et le vercel en production
+    "*"
+    ""  # Mise à jour pour correspondre à votre frontend et le vercel en production
 ]
 
 app = FastAPI(
