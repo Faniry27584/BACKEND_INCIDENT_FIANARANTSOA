@@ -1,6 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from typing import List
 import logging
+
+from pydantic import parse_obj_as
 from ..database.database import supabase
 # NOUVEAU: Importer les nouveaux schémas et utilitaires
 from ..schemas.users import UserResponse, UserUpdate, PasswordUpdate, UserPhotoUpdate
@@ -147,3 +149,67 @@ def update_user_photo(
         return {"message": "Photo de profil mise à jour avec succès.", "photo_url": payload.photo_url}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur serveur : {str(e)}")
+
+# Route pour la fonctionnalité "Contacter les Secours"
+@router.get("/panic-contacts",
+            response_model=List[UserResponse],
+            summary="Récupérer les contacts d'urgence pour le mode panique")
+def get_panic_contacts(
+    fokontany_id: int = Query(..., description="ID du Fokontany de l'utilisateur"),
+    type_id: int = Query(..., description="ID du type d'incident"),
+    current_user: UserResponse = Depends(get_current_user_data)
+):
+    """
+    Récupère une liste de contacts d'urgence pour le mode panique.
+    
+    La liste inclut toutes les autorités locales et les agents de sécurité urbaine
+    liés au fokontany de l'utilisateur et au poste de sécurité recommandé pour l'incident.
+    """
+    if current_user.role not in ["CITOYEN", "CHEF_FOKONTANY"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Action non autorisée.")
+    
+    try:
+        contact_list = []
+        
+        # 1. Récupérer toutes les Autorités Locales
+        authorities_res = supabase.table("utilisateurs").select("*, postes_securite(nom_poste)").eq("role", "AUTORITE_LOCALE").eq("est_verifie", True).execute()
+        if authorities_res.data:
+            contact_list.extend(authorities_res.data)
+        
+        logger.info(f"Étape 1: {len(contact_list)} Autorités Locales trouvées.")
+
+        # 2. Récupérer le poste recommandé pour le type d'incident
+        # On utilise .execute() pour une meilleure gestion des erreurs
+        type_res = supabase.table("typesincident").select("poste_recommande_id").eq("id", type_id).execute()
+        
+        # On vérifie si un poste recommandé a été trouvé
+        if type_res.data and type_res.data[0].get("poste_recommande_id"):
+            poste_id = type_res.data[0]["poste_recommande_id"]
+            logger.info(f"Étape 2: Incident de type {type_id} recommande le poste_id {poste_id}.")
+            
+            # 3. Récupérer les agents de sécurité correspondants
+            # La requête filtre par le fokontany_id ET le poste_securite_id
+            security_res = supabase.table("utilisateurs").select("*, postes_securite(nom_poste)") \
+                .eq("role", "SECURITE_URBAINE") \
+                .eq("est_verifie", True) \
+                .eq("fokontany_id", fokontany_id) \
+                .eq("poste_securite_id", poste_id) \
+                .execute()
+            
+            logger.info(f"Étape 3: Recherche d'agents pour fokontany_id={fokontany_id} et poste_id={poste_id}. Trouvé: {len(security_res.data)} agent(s).")
+            
+            if security_res.data:
+                # Ajoute les agents de sécurité à la liste sans créer de doublons
+                existing_ids = {user.get('id') for user in contact_list}
+                for agent in security_res.data:
+                    if agent.get('id') not in existing_ids:
+                        contact_list.append(agent)
+        else:
+            logger.warning(f"Aucun poste recommandé trouvé pour le type d'incident ID {type_id}.")
+        
+        # 4. Validation finale de la liste complète des contacts
+        return parse_obj_as(List[UserResponse], contact_list)
+
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération des contacts d'urgence : {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur serveur lors de la récupération des contacts.")
