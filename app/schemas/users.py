@@ -32,11 +32,11 @@ class UserCreate(BaseModel):
         from_attributes = True
 
 class UserResponse(BaseModel):
-    id: UUID  # <-- MODIFIÉ
+    id: UUID
     nom: str
     prenom: str
     email: str
-    role: str
+    role: Optional[str] = None  # Changement ici : role peut être None
     telephone: Optional[str] = None
     fokontany_id: Optional[int] = None
     poste_securite_id: Optional[int] = None
@@ -46,8 +46,8 @@ class UserResponse(BaseModel):
 
     class Config:
         from_attributes = True
-        json_encoders = {UUID: str} # Assure la sérialisation correcte
-
+        json_encoders = {UUID: str}
+        
 class UserPhotoUpdate(BaseModel):
     photo_url: str
 

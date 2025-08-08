@@ -52,7 +52,6 @@ def validate_user_account(user_id: UUID, background_tasks: BackgroundTasks, curr
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
-
 @router.delete("/users/{user_id}/reject",
                status_code=status.HTTP_204_NO_CONTENT,
                summary="Rejeter (supprimer) une demande d'inscription")
@@ -164,7 +163,6 @@ def get_admin_kpis(current_admin: UserResponse = Depends(get_current_admin_user)
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
-
 @router.get("/fokontany", response_model=List[FokontanyResponse], summary="Lister tous les Fokontany")
 def list_fokontany(current_user: UserResponse = Depends(get_current_admin_user)):
     # ... (code inchangé)
@@ -173,7 +171,6 @@ def list_fokontany(current_user: UserResponse = Depends(get_current_admin_user))
         return response.data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @router.post("/fokontany", response_model=FokontanyResponse, status_code=201, summary="Créer un Fokontany")
 def create_fokontany(fokontany: FokontanyCreate, current_user: UserResponse = Depends(get_current_admin_user)):
@@ -185,7 +182,6 @@ def create_fokontany(fokontany: FokontanyCreate, current_user: UserResponse = De
         if "duplicate key value" in str(e):
             raise HTTPException(status_code=409, detail=f"Le Fokontany '{fokontany.nom_fokontany}' existe déjà.")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @router.put("/fokontany/{fokontany_id}", response_model=FokontanyResponse, summary="Mettre à jour un Fokontany")
 def update_fokontany(fokontany_id: int, fokontany: FokontanyUpdate, current_user: UserResponse = Depends(get_current_admin_user)):
@@ -200,7 +196,6 @@ def update_fokontany(fokontany_id: int, fokontany: FokontanyUpdate, current_user
             raise HTTPException(status_code=409, detail="Ce nom de Fokontany est déjà utilisé.")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @router.delete("/fokontany/{fokontany_id}", status_code=204, summary="Supprimer un Fokontany")
 def delete_fokontany(fokontany_id: int, current_user: UserResponse = Depends(get_current_admin_user)):
     # ... (code inchangé)
@@ -213,7 +208,6 @@ def delete_fokontany(fokontany_id: int, current_user: UserResponse = Depends(get
             raise HTTPException(status_code=409, detail="Impossible de supprimer ce Fokontany car il est lié à des utilisateurs ou des incidents.")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 # --- Routes de gestion des Postes de Sécurité (existantes) ---
 
 @router.get("/postes", response_model=List[PosteSecuriteResponse], summary="Lister tous les Postes de Sécurité")
@@ -225,7 +219,6 @@ def list_postes(current_user: UserResponse = Depends(get_current_admin_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @router.post("/postes", response_model=PosteSecuriteResponse, status_code=201, summary="Créer un Poste de Sécurité")
 def create_poste(poste: PosteSecuriteCreate, current_user: UserResponse = Depends(get_current_admin_user)):
     # ... (code inchangé)
@@ -236,7 +229,6 @@ def create_poste(poste: PosteSecuriteCreate, current_user: UserResponse = Depend
         if "duplicate key value" in str(e):
             raise HTTPException(status_code=409, detail=f"Le poste '{poste.nom_poste}' existe déjà.")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @router.put("/postes/{poste_id}", response_model=PosteSecuriteResponse, summary="Mettre à jour un Poste de Sécurité")
 def update_poste(poste_id: int, poste: PosteSecuriteUpdate, current_user: UserResponse = Depends(get_current_admin_user)):
@@ -251,7 +243,6 @@ def update_poste(poste_id: int, poste: PosteSecuriteUpdate, current_user: UserRe
             raise HTTPException(status_code=409, detail="Ce nom de poste est déjà utilisé.")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @router.delete("/postes/{poste_id}", status_code=204, summary="Supprimer un Poste de Sécurité")
 def delete_poste(poste_id: int, current_user: UserResponse = Depends(get_current_admin_user)):
     # ... (code inchangé)
@@ -263,26 +254,3 @@ def delete_poste(poste_id: int, current_user: UserResponse = Depends(get_current
         if "foreign key constraint" in str(e):
             raise HTTPException(status_code=409, detail="Impossible de supprimer ce poste car il est lié à des utilisateurs ou des types d'incidents.")
         raise HTTPException(status_code=500, detail=str(e))
-    
-# --- CORRECTION: Logique de validation d'email ---
-@router.post("/users/{user_id}/check-email-validity",
-             summary="Vérifier la validité d'un email (via DNS)",
-             dependencies=[Depends(get_current_admin_user)])
-def check_email_validity(user_id: UUID):
-    try:
-        user_res = supabase.table("utilisateurs").select("email").eq("id", user_id).single().execute()
-        if not user_res.data:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur non trouvé.")
-        
-        email = user_res.data['email']
-        domain = email.split('@')[1]
-
-        # VRAIE VÉRIFICATION: On vérifie si le domaine a des enregistrements MX
-        try:
-            dns.resolver.resolve(domain, 'MX')
-            return {"email": email, "is_valid": True, "message": "Le domaine de l'e-mail est valide et accepte des e-mails."}
-        except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.exception.Timeout):
-            return {"email": email, "is_valid": False, "message": "Le domaine de l'e-mail semble invalide ou n'a pas pu être contacté."}
-            
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
